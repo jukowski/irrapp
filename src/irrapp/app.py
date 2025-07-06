@@ -8,7 +8,7 @@ conn = duckdb.connect(":memory:")
 catalog = get_catalog("/home/juko/irrapp")
 
 reg = ObjectRegistry(conn, catalog)
-reg.register_type("Customer", "Customer")
+reg.register_type("Customer", "Customer", mutable=True)
 reg.register_type("Invoice", "Invoice")
 
 reg.add_edge("Query", "customer", "Customer")

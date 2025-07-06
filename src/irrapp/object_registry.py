@@ -1,4 +1,5 @@
-from graphql import GraphQLField, GraphQLObjectType, GraphQLList, GraphQLSchema, GraphQLInputObjectType, GraphQLArgument, GraphQLInt
+from graphql import GraphQLField, GraphQLObjectType, GraphQLList, GraphQLSchema, \
+                    GraphQLInputObjectType, GraphQLArgument, GraphQLInt, GraphQLString, GraphQLInputField
 from irrapp.utils import get_catalog, generate_output_type, get_requested_fields, load_sql, generate_fields
 
 class ObjectRegistry:
@@ -42,10 +43,12 @@ class ObjectRegistry:
             catalog: Data catalog containing table definitions
         """
         self.output_types = {
-            "Query": {}
+            "Query": {},
         }
-        self.input_types = { }
-        self.count_types = { }
+        self.input_types = set()
+        self.count_types = set()
+        self.mutable_types = set()
+
         self.edges = {}
         self.conn = conn
         self.catalog = catalog
@@ -162,7 +165,7 @@ class ObjectRegistry:
         
         return _resolver
 
-    def register_type(self, type_name, table):
+    def register_type(self, type_name, table, mutable=False):
         """
         Register a DuckDB relationship as a GraphQL object type.
         
@@ -174,20 +177,93 @@ class ObjectRegistry:
         Args:
             type_name (str): The name to use for the GraphQL type (e.g., "Customer")
             table (str): The table name in the catalog (e.g., "Customer")
+            mutable (bool): If True, automatically create mutation methods for this type
             
         Example:
             # Register the Customer table as a Customer GraphQL type
             registry.register_type("Customer", "Customer")
             
+            # Register with mutations enabled
+            registry.register_type("Customer", "Customer", mutable=True)
+            
             # This creates:
             # - Customer type for query results
             # - CustomerFilter type for filtering
+            # - If mutable=True: create/update/delete mutation methods
         """
         relation = load_sql(self.conn, self.catalog, table)
         table_fields = generate_fields(relation)
         self.output_types[type_name] = table_fields.copy()
-        self.input_types[f"{type_name}Filter"] = table_fields.copy()
-        self.count_types[f"{type_name}Counts"] = dict([(fld, GraphQLInt) for fld in table_fields.keys()])
+        
+        self.input_types.add(f"{type_name}Filter") 
+        self.graphql_types[f"{type_name}Filter"] = GraphQLInputObjectType(
+                name=f"{type_name}Filter",
+                fields=table_fields
+            )
+        
+        self.count_types.add(f"{type_name}Counts")
+        self.graphql_types[f"{type_name}Counts"] = GraphQLObjectType(
+                name=f"{type_name}Counts",
+                fields=dict([(fld, GraphQLInt) for fld in table_fields.keys()])
+            )
+        
+        if mutable:
+            self.mutable_types.add(type_name)
+    
+    def _create_mutation_fields(self, type_name, table_fields):
+        """Create mutation fields for a mutable type."""
+        # Create input type for mutations
+        """
+        mutation_input_fields = {k: v for k, v in table_fields.items() if k != 'id'}
+        self.input_types[f"{type_name}Input"] = mutation_input_fields
+        
+        # Create update input type (all fields optional)
+        update_input_fields = {k: v for k, v in table_fields.items()}
+        self.input_types[f"{type_name}UpdateInput"] = update_input_fields
+        # Add mutation fields to the Mutation type
+        print(self.graphql_types.get(type_name))
+        self.output_types["Mutation"][f"create{type_name}"] = GraphQLInputField(
+            type_=self.graphql_types.get(type_name),
+            args={"input": GraphQLArgument(self.graphql_types.get(f"{type_name}Input"))},
+            resolve=self._create_mutation_resolver(type_name, "create")
+        )
+        self.output_types["Mutation"][f"update{type_name}"] = GraphQLField(
+            type_=self.graphql_types.get(type_name),
+            args={
+                "id": GraphQLArgument(GraphQLString),
+                "input": GraphQLArgument(self.graphql_types.get(f"{type_name}UpdateInput"))
+            },
+            resolve=self._create_mutation_resolver(type_name, "update")
+        )
+        
+        self.output_types["Mutation"][f"delete{type_name}"] = GraphQLField(
+            type_=GraphQLString,
+            args={"id": GraphQLArgument(GraphQLString)},
+            resolve=self._create_mutation_resolver(type_name, "delete")
+        )
+        """
+    
+    def _create_mutation_resolver(self, type_name, operation):
+        """Create a resolver function for mutation operations."""
+        def _resolver(obj, info, **kwargs):
+            if operation == "create":
+                input_data = kwargs.get("data", {})
+                print(input_data)
+                # Placeholder: return the input data as if it was created
+                return input_data
+            elif operation == "update":
+                record_id = kwargs.get("id")
+                input_data = kwargs.get("input", {})
+                # Placeholder: return the updated data
+                return {"id": record_id, **input_data}
+            elif operation == "delete":
+                record_id = kwargs.get("id")
+                # Placeholder: return success message
+                return f"Deleted {type_name} with id {record_id}"
+            
+            return None
+        
+        return _resolver
         
     def lazy_generate(self, type_name):
         def _generate():
@@ -212,6 +288,9 @@ class ObjectRegistry:
         return _generate 
 
 
+    def create_record(self):
+        pass
+
     def generate_schema(self):
         """
         Generate the complete GraphQL schema from registered types and edges.
@@ -227,21 +306,6 @@ class ObjectRegistry:
             schema = registry.generate_schema()
             app = GraphQL(schema=schema)
         """    
-        self.graphql_types = {}    
-
-        # Create input types for filters
-        for type_name, fields in self.input_types.items():
-            self.graphql_types[type_name] = GraphQLInputObjectType(
-                name=type_name,
-                fields=fields
-            )
-
-        # Create country types for aggregations
-        for type_name, fields in self.count_types.items():
-            self.graphql_types[type_name] = GraphQLObjectType(
-                name=type_name,
-                fields=fields
-            )
 
         for type_name, fields in self.output_types.items():
             self.graphql_types[type_name] = GraphQLObjectType(
@@ -249,5 +313,22 @@ class ObjectRegistry:
                 fields=self.lazy_generate(type_name)  # Use lambda for lazy evaluation
             )
 
-        return GraphQLSchema(query=self.graphql_types["Query"])
+        if self.mutable_types:
+            mutation_fields = {}
+            for type_name in self.mutable_types:
+                mutation_fields[f"create{type_name}"] = GraphQLField(
+                    type_ = self.graphql_types[f"{type_name}"],
+                    args={
+                        "data": GraphQLArgument(self.graphql_types[f"{type_name}Filter"])
+                    },
+                    resolve=self._create_mutation_resolver(type_name, "create")
+                )
+            
+            # Create the schema with mutation support if there are mutable types
+            return GraphQLSchema(
+                query=self.graphql_types["Query"],
+                mutation=GraphQLObjectType("Mutation", mutation_fields)
+            )
+        else:
+            return GraphQLSchema(query=self.graphql_types["Query"])
 
