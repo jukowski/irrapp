@@ -112,7 +112,7 @@ class ObjectRegistry:
 
             # Get requested fields and return matching records
             requested_fields = get_requested_fields(info)
-            raw_fields = list(set(requested_fields) & set(relation.columns))          
+            raw_fields = list(set(requested_fields) & set(relation.columns))   
             
             if "_distinct_" in requested_fields:
                 # Get the distinct count fields from the _distinct_ selection
@@ -123,13 +123,14 @@ class ObjectRegistry:
                             distinct_fields = [sub_selection.name.value for sub_selection in selection.selection_set.selections]
                             break
                 
+                distinct_fields = list(set(distinct_fields) & set(relation.columns))   
+
                 # Build count distinct query for each requested field
                 count_queries = []
                 for field in distinct_fields:
                     count_queries.append(f"COUNT(DISTINCT {field}) as _distinct___{field}")
                 # Execute count distinct aggregation
                 relation = relation.aggregate(", ".join(raw_fields + count_queries), ", ".join(raw_fields))
-                print(relation)
             else:
                 relation = relation.select(*raw_fields)
 
