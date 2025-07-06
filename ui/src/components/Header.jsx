@@ -27,7 +27,7 @@ export const Header = () => {
           className="p-2 hover:bg-gray-100 rounded-md"
           onClick={toggleSidebar}
         />
-        <Text className="text-xl font-semibold text-gray-800">IRR</Text>
+        <Text size={500} weight="semibold" className="font-semibold text-gray-800">IRR</Text>
       </div>
       
       <Toolbar className="flex items-center gap-2">
@@ -43,9 +43,8 @@ export const Header = () => {
             appearance="subtle"
             icon={<Settings24Regular />}
             aria-label="Settings"
-          >
-            Settings
-          </ToolbarButton>
+            onClick={() => window.location.href = '/api'}
+          />
         </ToolbarGroup>
         
         <ToolbarDivider />
